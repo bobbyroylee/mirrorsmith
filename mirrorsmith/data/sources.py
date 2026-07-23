@@ -78,14 +78,12 @@ EAGER_FILES: tuple[str, ...] = (
 
 # --- Layer 2: live meta & economy (poe.ninja) ----------------------------------
 #
-# Public economy API needs no key. Endpoints take a `league` query param.
-# The build corpus endpoints are undocumented/internal and may change without
-# notice — treated as best-effort in ninja.py.
-NINJA_BASE = "https://poe.ninja/api/data"
-
-# Default league to query for live data. PoE league names are like "Mirage" for
-# the current temp league, "Standard" for the permanent realm.
-DEFAULT_LEAGUE = "Mirage"
+# poe.ninja's API is now game-namespaced (poe1/poe2) and no longer uses the old
+# /api/data/currencyoverview path. Endpoints + formats live in ninja.py, which
+# discovers the current league dynamically from /data/index-state (PoE1 is often
+# between leagues, so a hard-coded league name would 404). Economy is JSON; the
+# build corpus is now undocumented protobuf (parse deferred).
+NINJA_POE1_API = "https://poe.ninja/poe1/api"
 
 
 # --- Layer 3: official GGG API (deferred) --------------------------------------

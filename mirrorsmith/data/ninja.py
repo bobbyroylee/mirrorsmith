@@ -1,68 +1,133 @@
 """poe.ninja client — Layer 2 live meta & economy.
 
-Two surfaces:
-  * Economy (public, documented-ish): currency + item prices per league.
-  * Build corpus (internal/undocumented): what the top-ranked players run. Powerful
-    as an example set and a validation target, but the endpoint shape can change
-    without notice, so callers should treat it as best-effort.
+Reverse-engineered from the live site (2026-07), because poe.ninja moved its API
+under a game-namespaced path and changed formats:
 
-Standard library only. No API key required.
+  * Base is now ``https://poe.ninja/poe1/api`` (``poe2`` for PoE2).
+  * ``/data/index-state`` (JSON) lists the current economy leagues and the build
+    ``snapshotVersions`` — query it instead of hard-coding a league, because PoE1
+    sits between leagues at times (only Standard/Hardcore live).
+  * Economy is JSON at ``/economy/exchange/current/overview``.
+  * Builds are now **protobuf** (``application/x-protobuf``), dictionary-compressed
+    via ``/builds/dictionary/{hash}`` side tables — undocumented, no schema
+    published. We expose the correct URLs and return raw bytes; decoding is
+    deferred (see ``builds_search_raw``).
+
+Responses may be gzip-encoded; we decode transparently. Standard library only.
 """
 
 from __future__ import annotations
 
+import gzip
 import json
+import urllib.error
 import urllib.parse
 import urllib.request
+import zlib
 from typing import Any
 
-from . import sources
+POE1_API = "https://poe.ninja/poe1/api"
+_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) mirrorsmith/0.0.1 Chrome/126.0 Safari/537.36"
 
-_USER_AGENT = "mirrorsmith/0.0.1 (+https://github.com/bobbyroylee/mirrorsmith)"
 
-# Currency-type overviews (get_currency_overview) vs item-type overviews
-# (get_item_overview). These are the stable overview categories.
-CURRENCY_TYPES = ("Currency", "Fragment")
-ITEM_TYPES = (
-    "DivinationCard", "UniqueWeapon", "UniqueArmour", "UniqueAccessory",
-    "UniqueFlask", "UniqueJewel", "SkillGem", "Cluster", "Fossil", "Essence",
-    "Scarab", "BaseType",
-)
+class NinjaError(RuntimeError):
+    pass
+
+
+def _get(url: str) -> bytes:
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": _UA,
+            "Accept": "application/json, application/x-protobuf, */*",
+            "Accept-Encoding": "gzip, deflate",
+            "Referer": "https://poe.ninja/",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            raw = resp.read()
+            enc = (resp.headers.get("Content-Encoding") or "").lower()
+    except urllib.error.HTTPError as exc:
+        raise NinjaError(f"HTTP {exc.code} for {url}") from exc
+    if enc == "gzip":
+        return gzip.decompress(raw)
+    if enc == "deflate":
+        return zlib.decompress(raw)
+    return raw
 
 
 def _get_json(url: str) -> Any:
-    req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    return json.loads(_get(url).decode("utf-8"))
 
 
-def _url(path: str, **params: str) -> str:
-    q = urllib.parse.urlencode(params)
-    return f"{sources.NINJA_BASE}/{path}?{q}"
+# --- discovery -----------------------------------------------------------------
+def index_state() -> dict[str, Any]:
+    """Current PoE1 economy leagues + build snapshot versions (JSON).
 
-
-def currency_overview(type_: str = "Currency", league: str | None = None) -> dict[str, Any]:
-    """Currency/fragment prices for a league. ``type_`` in CURRENCY_TYPES."""
-    league = league or sources.DEFAULT_LEAGUE
-    return _get_json(_url("currencyoverview", league=league, type=type_))
-
-
-def item_overview(type_: str, league: str | None = None) -> dict[str, Any]:
-    """Item prices for a league. ``type_`` in ITEM_TYPES."""
-    league = league or sources.DEFAULT_LEAGUE
-    return _get_json(_url("itemoverview", league=league, type=type_))
-
-
-def builds_overview(league: str | None = None) -> dict[str, Any]:
-    """Top-ranked players' build snapshots for a league (undocumented endpoint).
-
-    Returns the raw poe.ninja build payload (accounts, characters, and the
-    per-character tree/skill/item indices). Best-effort: shape may change.
+    Keys of interest: ``economyLeagues`` (live now), ``buildLeagues``, and
+    ``snapshotVersions`` — each snapshot has ``url``, ``snapshotName``, ``type``,
+    ``version`` (the id used in build URLs), and ``passiveTree``/``atlasTree``.
     """
-    league = league or sources.DEFAULT_LEAGUE
-    # poe.ninja serves the builds snapshot from the character/getState surface.
-    overview = urllib.parse.quote(f"{league}")
-    return _get_json(
-        f"https://poe.ninja/api/data/{overview}/getbuildoverview"
-        f"?overview={overview}&type=exp&language=en"
-    )
+    return _get_json(f"{POE1_API}/data/index-state")
+
+
+def current_economy_leagues() -> list[str]:
+    """Names of leagues with live economy data right now (e.g. ['Standard', ...])."""
+    return [lg.get("name", "") for lg in index_state().get("economyLeagues", []) if lg]
+
+
+def default_league() -> str:
+    """The most representative live economy league. Prefers the current temp
+    league; falls back to Standard. Never hard-coded — derived from index-state."""
+    leagues = current_economy_leagues()
+    for name in leagues:
+        if name not in ("Standard", "Hardcore", "SSF Standard", "Hardcore SSF Standard"):
+            return name  # an active challenge league, if one is live
+    return leagues[0] if leagues else "Standard"
+
+
+# --- economy -------------------------------------------------------------------
+def currency_overview(type_: str = "Currency", league: str | None = None) -> dict[str, Any]:
+    """Currency/Fragment prices for a league. ``type_`` in {"Currency","Fragment"}.
+
+    Returns the raw payload; ``lines`` holds priced entries (currencyTypeName,
+    chaosEquivalent, ...), ``items`` holds the item metadata table.
+    """
+    league = league or default_league()
+    q = urllib.parse.urlencode({"league": league, "type": type_})
+    return _get_json(f"{POE1_API}/economy/exchange/current/overview?{q}")
+
+
+# --- builds (protobuf; parse deferred) -----------------------------------------
+def build_snapshot(league_url: str = "standard") -> dict[str, Any] | None:
+    """Look up the current build snapshot descriptor for a league from index-state.
+
+    Returns the snapshotVersions entry (with ``version`` id + ``passiveTree``), or
+    None if that league has no build snapshot.
+    """
+    for snap in index_state().get("snapshotVersions", []):
+        if snap.get("url") == league_url and snap.get("type") == "exp":
+            return snap
+    return None
+
+
+def builds_search_raw(league_url: str = "standard") -> bytes:
+    """Raw protobuf bytes of the top-player build corpus for a league.
+
+    poe.ninja serves this as ``application/x-protobuf`` with no published schema,
+    using ``/builds/dictionary/{hash}`` side tables for skill/item/tree names.
+    Decoding is intentionally deferred — see the module docstring. Returns the
+    undecoded bytes so a future parser (or a protobuf schema we reverse-engineer)
+    can consume them.
+    """
+    snap = build_snapshot(league_url)
+    if snap is None:
+        raise NinjaError(f"no build snapshot for league {league_url!r}")
+    version = snap["version"]
+    return _get(f"{POE1_API}/builds/{version}/search?overview={snap['snapshotName']}&type=exp")
+
+
+def builds_dictionary_raw(dict_hash: str) -> bytes:
+    """Raw bytes of a builds dictionary side-table (also protobuf)."""
+    return _get(f"{POE1_API}/builds/dictionary/{dict_hash}")

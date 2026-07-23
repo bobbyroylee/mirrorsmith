@@ -28,10 +28,16 @@ even after a league reshapes the tree. Bumping to a new league is a one-line pin
 Currently pinned: **3.28.0.16** (Mirage league).
 
 ### Layer 2 — Live meta & economy ("what's good and what it costs")
-**Source: [poe.ninja](https://poe.ninja)** — currency/item prices (public API) and the
-build corpus of the top-ranked players each league. This answers *"is this strong right
-now"* and *"what does it cost to gear."* The build corpus also doubles as our example set
-for learning and for validating the build engine.
+**Source: [poe.ninja](https://poe.ninja)** (API base `poe.ninja/poe1/api`, discovered from
+live traffic — the old `/api/data/*` paths are dead). Two surfaces:
+- **Economy** — JSON, wired and working. Live currency prices, league discovered dynamically
+  from `/data/index-state` (PoE1 is often *between* leagues, so the league is never
+  hard-coded). See [`ninja.py`](mirrorsmith/data/ninja.py).
+- **Build corpus** — the top-ranked players' builds. poe.ninja now serves this as
+  **undocumented `application/x-protobuf`** (dictionary-compressed binary, no published
+  schema). We resolve the snapshot and fetch the raw bytes; **decoding is deferred** pending
+  a decision to reverse-engineer the protobuf schema vs. sourcing example builds another way
+  (e.g. official OAuth character import, PoB codes).
 
 ### Layer 3 — Player-specific ("import my character") — *deferred*
 The [official GGG Developer API](https://www.pathofexile.com/developer/docs) (OAuth 2.0)
@@ -51,8 +57,11 @@ build our own calculations we align to its logic for correctness.
 # Pull the current-league data (tree first; large item files on demand)
 python scripts/refresh_data.py
 
-# Prove it: parse the live passive tree and print stats
+# Prove the tree: parse the live passive tree and print stats
 python scripts/tree_stats.py
+
+# Full end-to-end demo: rendered tree + live economy + build snapshot
+python scripts/demo.py
 ```
 
 ## Layout
@@ -62,11 +71,13 @@ mirrorsmith/
   data/
     sources.py   # pinned source manifest (SHA, version, file list, poe.ninja base)
     fetch.py     # cached downloader — pulls pinned JSON, caches locally by version
-    tree.py      # passive tree normalizer — Default.json -> typed node model
-    ninja.py     # poe.ninja economy + build-corpus client
+    tree.py      # passive tree normalizer — Default.json -> typed node graph
+    stats.py     # stat-translation renderer — raw stat-ids -> English
+    ninja.py     # poe.ninja client — economy (JSON) + build corpus (protobuf, deferred)
 scripts/
   refresh_data.py  # fetch & cache current-league data
   tree_stats.py    # validation: fetch + parse the tree, print stats
+  demo.py          # end-to-end: rendered tree + live currency prices + build snapshot
 ```
 
 ## Data ownership & attribution
