@@ -1,0 +1,31 @@
+[project]
+name = "mirrorsmith"
+version = "0.0.1"
+description = "The ultimate Path of Exile 1 build maker, helper, and creator."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "bobbyroylee" }]
+keywords = ["path-of-exile", "poe", "build", "passive-tree", "theorycraft"]
+
+# The data-ingestion foundation intentionally uses only the standard library so
+# `scripts/refresh_data.py` and `scripts/tree_stats.py` run with zero install.
+dependencies = []
+
+[project.optional-dependencies]
+# Added as later layers need them (HTTP niceties, testing, linting).
+dev = ["pytest>=8", "ruff>=0.5"]
+
+[project.urls]
+Repository = "https://github.com/bobbyroylee/mirrorsmith"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["mirrorsmith*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
