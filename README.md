@@ -39,10 +39,23 @@ live traffic — the old `/api/data/*` paths are dead). Two surfaces:
   a decision to reverse-engineer the protobuf schema vs. sourcing example builds another way
   (e.g. official OAuth character import, PoB codes).
 
-### Layer 3 — Player-specific ("import my character") — *deferred*
-The [official GGG Developer API](https://www.pathofexile.com/developer/docs) (OAuth 2.0)
-can import a real account's characters, tree, and gear. Deferred until the core works —
-poe.ninja + Path of Building import codes give us far more example builds with no auth.
+### Layer 3 — Player-specific ("import my character") — *working*
+Import a real character's allocated tree + gear + gems via pathofexile.com's
+`character-window` endpoints (the mechanism Path of Building uses). Two GGG
+realities discovered the hard way:
+- The **official OAuth API is currently closed to new applications** ("We are
+  currently unable to process new applications"), so a `client_id` can't be
+  obtained right now.
+- **Anonymous access to character data is gone** — even public profiles now
+  require a `POESESSID` session cookie.
+
+So import needs a `POESESSID` (kept in a gitignored file, never printed/committed —
+see [`scripts/save_poesessid.py`](scripts/save_poesessid.py) for a paste-once GUI).
+The imported base-tree hashes resolve **100%** against our pinned tree — which is
+also our correctness check that the pinned data matches the live game. Cluster-jewel
+nodes (`hashes_ex`) resolve from the payload's own `jewel_data`; tattoos come from
+`skill_overrides`. See [`account.py`](mirrorsmith/data/account.py) and
+[`character.py`](mirrorsmith/character.py).
 
 ### Calculation reference
 [Path of Building Community](https://github.com/PathOfBuildingCommunity/PathOfBuilding)
@@ -62,6 +75,11 @@ python scripts/tree_stats.py
 
 # Full end-to-end demo: rendered tree + live economy + build snapshot
 python scripts/demo.py
+
+# Import a real character (needs a POESESSID; see below)
+python scripts/save_poesessid.py                        # paste-once GUI, saves gitignored file
+python scripts/import_character.py --list               # your characters
+python scripts/import_character.py "account#1234" "CharName"
 ```
 
 ## Layout
@@ -74,10 +92,14 @@ mirrorsmith/
     tree.py      # passive tree normalizer — Default.json -> typed node graph
     stats.py     # stat-translation renderer — raw stat-ids -> English
     ninja.py     # poe.ninja client — economy (JSON) + build corpus (protobuf, deferred)
+    account.py   # character-window import (POESESSID) — allocated tree + gear
+  character.py   # imported character -> build summary, joined against the tree
 scripts/
-  refresh_data.py  # fetch & cache current-league data
-  tree_stats.py    # validation: fetch + parse the tree, print stats
-  demo.py          # end-to-end: rendered tree + live currency prices + build snapshot
+  refresh_data.py     # fetch & cache current-league data
+  tree_stats.py       # validation: fetch + parse the tree, print stats
+  demo.py             # end-to-end: rendered tree + live currency prices + build snapshot
+  save_poesessid.py   # paste-once GUI to store your POESESSID (gitignored)
+  import_character.py # import a real character and summarize the build
 ```
 
 ## Data ownership & attribution

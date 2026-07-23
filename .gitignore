@@ -21,6 +21,9 @@ env/
 .DS_Store
 Thumbs.db
 
-# Secrets (future OAuth client creds, API keys)
+# Secrets (POESESSID session cookie, OAuth client creds, API keys)
 .env
 *.secret
+*.poesessid
+/secrets/
+.mirrorsmith/
