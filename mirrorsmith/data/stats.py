@@ -94,11 +94,26 @@ class StatTranslator:
     def load(cls, *, force: bool = False) -> "StatTranslator":
         return cls(fetch.load_json("stat_translations", force=force))
 
+    def _alias(self, stat_id: str) -> str:
+        """Map a tree stat id to its translatable equivalent when they differ.
+        Passive nodes use ``base_strength`` etc., but the description file keys
+        those on ``additional_strength``."""
+        if stat_id in self._index:
+            return stat_id
+        if stat_id.startswith("base_"):
+            alt = "additional_" + stat_id[len("base_"):]
+            if alt in self._index:
+                return alt
+        return stat_id
+
     # -- public API ----------------------------------------------------------
     def render(self, stats: dict[str, float]) -> list[str]:
         """Render a stat dict to English lines. Untranslated ids fall back to a
         readable ``id = value`` so nothing is silently dropped."""
-        remaining = dict(stats)
+        remaining: dict[str, float] = {}
+        for sid, val in stats.items():
+            key = self._alias(sid)
+            remaining[key] = remaining.get(key, 0.0) + val
         lines: list[str] = []
 
         candidates = {

@@ -80,6 +80,9 @@ python scripts/demo.py
 python scripts/save_poesessid.py                        # paste-once GUI, saves gitignored file
 python scripts/import_character.py --list               # your characters
 python scripts/import_character.py "account#1234" "CharName"
+
+# Analyze a build: aggregate the allocated tree into "what it grants"
+python scripts/analyze_character.py "account#1234" "CharName"
 ```
 
 ## Layout
@@ -94,6 +97,7 @@ mirrorsmith/
     ninja.py     # poe.ninja client — economy (JSON) + build corpus (protobuf, deferred)
     account.py   # character-window import (POESESSID) — allocated tree + gear
   character.py   # imported character -> build summary, joined against the tree
+  build.py       # build reasoning — aggregate allocated nodes into categorized stat totals
 scripts/
   refresh_data.py     # fetch & cache current-league data
   tree_stats.py       # validation: fetch + parse the tree, print stats
