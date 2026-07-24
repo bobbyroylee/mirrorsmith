@@ -53,6 +53,24 @@ class BuildAnalysis:
         return out
 
 
+@dataclass
+class GemInfo:
+    name: str
+    level: str | None
+    quality: str | None
+    support: bool
+
+
+@dataclass
+class FullBuild:
+    """The whole build's sources shown side by side. Deliberately NOT fused into
+    single numbers — item mods are local/global/conditional, so real EHP/DPS
+    totals need a calculation engine (the next milestone), not summation."""
+    tree: BuildAnalysis
+    gear: dict[str, list[str]]  # category -> mod lines ("N× ..." when repeated)
+    gems: list[GemInfo]
+
+
 def resolved_base_nodes(imported: dict[str, Any], tree: PassiveTree) -> list[PassiveNode]:
     nodes: list[PassiveNode] = []
     for h in imported.get("passives", {}).get("hashes", []) or []:
@@ -97,6 +115,63 @@ def _cluster_grants(imported: dict[str, Any]) -> list[str]:
     for stat, n in sorted(counter.items(), key=lambda kv: (-kv[1], kv[0])):
         lines.append(f"{n}× {stat}" if n > 1 else stat)
     return lines
+
+
+_GEAR_MOD_FIELDS = ("enchantMods", "implicitMods", "explicitMods",
+                    "craftedMods", "fracturedMods")
+_SKIP_SLOTS = {"Flask", "PassiveJewels"}
+
+
+def aggregate_gear(imported: dict[str, Any]) -> dict[str, list[str]]:
+    """Group equipped-item mods by category. Rolls differ between items, so we
+    show them as text (counting exact duplicates) rather than summing — see
+    FullBuild for why fusion needs a calc engine."""
+    items = (imported.get("items", {}) or {}).get("items", []) or []
+    by_cat: dict[str, Counter[str]] = {}
+    for it in items:
+        if it.get("inventoryId") in _SKIP_SLOTS:
+            continue
+        for field_name in _GEAR_MOD_FIELDS:
+            for mod in it.get(field_name, []) or []:
+                text = " ".join(str(mod).split())
+                by_cat.setdefault(_categorize(text), Counter())[text] += 1
+    out: dict[str, list[str]] = {}
+    for cat, counter in by_cat.items():
+        lines = [f"{n}× {m}" if n > 1 else m
+                 for m, n in sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))]
+        out[cat] = lines
+    return out
+
+
+def list_gems(imported: dict[str, Any]) -> list[GemInfo]:
+    """Socketed gems across equipped items, with level/quality."""
+    items = (imported.get("items", {}) or {}).get("items", []) or []
+    gems: list[GemInfo] = []
+    seen: set[str] = set()
+    for it in items:
+        for g in it.get("socketedItems", []) or []:
+            name = g.get("typeLine", "")
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            lvl = qual = None
+            for p in g.get("properties", []) or []:
+                if p.get("name") == "Level" and p.get("values"):
+                    lvl = p["values"][0][0]
+                elif p.get("name") == "Quality" and p.get("values"):
+                    qual = p["values"][0][0]
+            gems.append(GemInfo(name=name, level=lvl, quality=qual,
+                                support="Support" in name))
+    return gems
+
+
+def analyze_full(imported: dict[str, Any], tree: PassiveTree,
+                 translator: StatTranslator) -> FullBuild:
+    return FullBuild(
+        tree=analyze(imported, tree, translator),
+        gear=aggregate_gear(imported),
+        gems=list_gems(imported),
+    )
 
 
 def analyze(imported: dict[str, Any], tree: PassiveTree,
