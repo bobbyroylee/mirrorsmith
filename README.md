@@ -101,7 +101,8 @@ mirrorsmith/
     account.py   # character-window import (POESESSID) — allocated tree + gear
   character.py   # imported character -> build summary, joined against the tree
   build.py       # build reasoning — aggregate allocated nodes into categorized stat totals
-  webapp.py      # local web UI (stdlib http.server) — full build sheet in the browser
+  calc.py        # calc engine v1 — fused defensive totals (resists/suppress) + health check
+  webapp.py      # local web UI (stdlib http.server) — build sheet + health check in the browser
 scripts/
   refresh_data.py     # fetch & cache current-league data
   tree_stats.py       # validation: fetch + parse the tree, print stats
