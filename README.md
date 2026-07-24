@@ -83,6 +83,9 @@ python scripts/import_character.py "account#1234" "CharName"
 
 # Analyze a build: aggregate the allocated tree into "what it grants"
 python scripts/analyze_character.py "account#1234" "CharName"
+
+# Web UI: pick a character, import, and see the full build sheet in the browser
+python scripts/serve.py                                 # http://127.0.0.1:8770
 ```
 
 ## Layout
@@ -98,12 +101,15 @@ mirrorsmith/
     account.py   # character-window import (POESESSID) — allocated tree + gear
   character.py   # imported character -> build summary, joined against the tree
   build.py       # build reasoning — aggregate allocated nodes into categorized stat totals
+  webapp.py      # local web UI (stdlib http.server) — full build sheet in the browser
 scripts/
   refresh_data.py     # fetch & cache current-league data
   tree_stats.py       # validation: fetch + parse the tree, print stats
   demo.py             # end-to-end: rendered tree + live currency prices + build snapshot
   save_poesessid.py   # paste-once GUI to store your POESESSID (gitignored)
   import_character.py # import a real character and summarize the build
+  analyze_character.py# aggregate a character into a categorized build sheet
+  serve.py            # launch the local web UI
 ```
 
 ## Data ownership & attribution
