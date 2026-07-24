@@ -18,7 +18,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from .build import _CATEGORIES, analyze_full
-from .calc import defensive_summary
+from .calc import evaluate
 from .data import account
 from .data.stats import StatTranslator
 from .data.tree import PassiveTree
@@ -51,7 +51,7 @@ def build_payload(acct: str, character: str) -> dict[str, object]:
     """Import + analyze one character into the JSON the frontend renders."""
     imported = account.fetch_character(acct, character, "pc", _poesessid())
     fb = analyze_full(imported, _tree(), _translator())
-    dsum = defensive_summary(imported, _tree(), _translator())
+    ev = evaluate(imported, _tree(), _translator())
     meta = (imported.get("items", {}) or {}).get("character", {})
     a = fb.tree
     return {
@@ -61,12 +61,18 @@ def build_payload(acct: str, character: str) -> dict[str, object]:
             "level": meta.get("level"),
             "league": meta.get("league"),
         },
-        "defence": {
+        "eval": {
+            "keystones": ev.keystones,
+            "pools": {"es": ev.energy_shield, "life": ev.life, "mana": ev.mana,
+                      "top": ev.top_pool_label, "es_items": ev.es_from_items,
+                      "es_flat": ev.es_flat_global, "es_inc": ev.es_inc_global},
+            "ehp": ev.ehp,
             "resists": [{"name": r.name, "net": round(r.net), "cap": r.cap,
                          "over": round(max(r.over, 0)), "capped": r.capped}
-                        for r in dsum.resists.values()],
-            "suppress": round(dsum.suppress),
-            "flags": dsum.flags,
+                        for r in ev.resists.values()],
+            "suppress": round(ev.suppress),
+            "recs": [{"severity": r.severity, "title": r.title, "detail": r.detail}
+                     for r in ev.recs],
         },
         "tree": {
             "nodes": a.points_counted,
@@ -178,6 +184,22 @@ main{max-width:1200px;margin:0 auto;padding:22px 20px 60px}
 .gem.sup .nm{color:var(--muted)}
 .pill{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:20px;
   padding:2px 10px;margin:2px 4px 2px 0;font-size:12px;color:var(--muted)}
+.vitals{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin:0 0 14px}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.tile .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+.tile .v{font-size:26px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.2}
+.tile .s{font-size:11px;color:var(--muted)}
+.tile.hi .v{color:var(--gold)}
+.recs{margin:0 0 18px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.recs>h2{margin:0;padding:11px 16px;font-size:13px;letter-spacing:.6px;text-transform:uppercase;
+  color:var(--muted);border-bottom:1px solid var(--line);background:var(--panel2)}
+.rec{padding:10px 16px;border-bottom:1px solid var(--line);border-left:3px solid var(--line)}
+.rec:last-child{border-bottom:0}
+.rec.critical{border-left-color:#e06a6a}.rec.warning{border-left-color:#e0a24a}.rec.tune{border-left-color:#6ea8ff}
+.rec .t{font-weight:600}
+.rec.critical .t{color:#e06a6a}.rec.warning .t{color:#e0a24a}.rec.tune .t{color:#6ea8ff}
+.rec .d{color:var(--muted);font-size:12.5px;margin-top:2px}
+.recs .clean{padding:14px 16px;color:#5fbf7f;font-weight:600}
 .defence{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 18px;
   padding:14px 16px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
 .res{display:flex;flex-direction:column;min-width:82px;padding:8px 12px;border-radius:10px;
@@ -210,6 +232,8 @@ main{max-width:1200px;margin:0 auto;padding:22px 20px 60px}
     <div class="hero">
       <h1 id="cName"></h1><div class="cls" id="cCls"></div><div class="meta" id="cMeta"></div>
     </div>
+    <div id="vitals" class="vitals"></div>
+    <div id="recs" class="recs" hidden></div>
     <div id="defence" class="defence"></div>
     <div class="cols">
       <div class="card"><h2 id="treeH">Passive Tree</h2><div class="body" id="tree"></div></div>
@@ -260,19 +284,35 @@ function render(d){
   $('#cName').textContent=d.character.name;
   $('#cCls').textContent=d.character.class||'';
   $('#cMeta').textContent=`lvl ${d.character.level||'?'} · ${d.character.league||''}`;
-  const dz=d.defence;
-  const chips=dz.resists.map(r=>{
+  const ev=d.eval, p=ev.pools;
+  const eleEhp=Math.min(ev.ehp.fire,ev.ehp.cold,ev.ehp.lightning);
+  const num=n=>n.toLocaleString();
+  const tiles=[];
+  if(p.top==='Energy Shield')
+    tiles.push(['Energy Shield',num(p.es),`${num(p.es_items)} items + ${num(p.es_flat)} flat ×${(1+p.es_inc/100).toFixed(2)} · pre-aura`,'hi']);
+  else tiles.push(['Life',num(p.life),`level ${d.character.level}`,'hi']);
+  tiles.push(['EHP vs Elements',num(eleEhp),'resist-only, attack basis']);
+  tiles.push(['Spell Suppress',`${ev.suppress}%`, ev.suppress>=100?'capped':'chance to suppress spell hits']);
+  if(p.top==='Energy Shield') tiles.push(['Life',num(p.life), ev.keystones.includes('Chaos Inoculation')?'Chaos Inoculation':'']);
+  tiles.push(['Mana',num(p.mana),'']);
+  $('#vitals').innerHTML=tiles.map(t=>`<div class="tile ${t[3]||''}"><div class="k">${t[0]}</div><div class="v">${t[1]}</div><div class="s">${esc(t[2])}</div></div>`).join('');
+
+  const rz=$('#recs');
+  if(ev.recs.length){
+    rz.innerHTML='<h2>Recommendations</h2>'+ev.recs.map(r=>
+      `<div class="rec ${r.severity}"><div class="t">${esc(r.title)}</div><div class="d">${esc(r.detail)}</div></div>`).join('');
+  }else{rz.innerHTML='<h2>Recommendations</h2><div class="clean">✓ No defensive issues found.</div>';}
+  rz.hidden=false;
+
+  const chips=ev.resists.map(r=>{
     const cls=r.capped?'ok':(r.name==='Chaos'?'':'bad');
     let over;
     if(r.name==='Chaos') over = r.net<0?`${-r.net}% negative`:'uncapped ok';
     else over = r.over>0?`over +${r.over}%`:(r.capped?'capped':`${r.cap-r.net}% under`);
     return `<div class="res ${cls}"><span class="k">${r.name}</span><span class="v">${r.net}%</span><span class="o">${over}</span></div>`;
   }).join('');
-  const supp=`<div class="res ${dz.suppress>=100?'ok':''}"><span class="k">Suppress</span><span class="v">${dz.suppress}%</span><span class="o">spell</span></div>`;
-  const hc=dz.flags.length
-    ? `<div class="hc">${dz.flags.map(f=>`<div class="flag">${esc(f)}</div>`).join('')}</div>`
-    : `<div class="hc"><span class="ok">✓ Elemental resistances capped — defences look healthy.</span></div>`;
-  $('#defence').innerHTML=chips+supp+hc;
+  const ks=ev.keystones.length?`<div class="hc"><span class="k">keystones</span> ${ev.keystones.map(esc).join(' · ')}</div>`:'';
+  $('#defence').innerHTML=chips+ks;
   $('#treeH').textContent=`Passive Tree · ${d.tree.nodes} nodes · ${d.tree.stats} stats`;
   let t=d.tree.categories.map(catBlock).join('');
   if(d.tree.cluster&&d.tree.cluster.length) t+=catBlock({name:'Cluster Jewels',lines:d.tree.cluster});
